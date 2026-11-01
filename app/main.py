@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from . import ai, config, tracking
 from .excel import workbook_to_text
+from .images import image_blocks, is_image
 from .intervals import Intervals, IntervalsError
 
 load_dotenv()
@@ -83,27 +84,43 @@ def athletes():
         raise HTTPException(502, str(e))
 
 
+MAX_FILES = 10
+
+
 @app.post("/api/parse")
-async def parse(file: UploadFile = File(...), week_start: str = Form(...)):
+async def parse(files: list[UploadFile] = File(...), week_start: str = Form(...)):
     try:
         dt.date.fromisoformat(week_start)
     except ValueError:
         raise HTTPException(400, "Fecha de inicio de semana no válida")
-    name = file.filename or "archivo.xlsx"
-    if not name.lower().endswith((".xlsx", ".xlsm", ".csv")):
-        raise HTTPException(400, "Sube un archivo .xlsx o .csv (si es .xls antiguo, guárdalo como .xlsx)")
-    try:
-        text = workbook_to_text(await file.read(), name)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    except Exception:
-        raise HTTPException(400, "No se pudo leer el archivo. ¿Es un Excel válido?")
+    if len(files) > MAX_FILES:
+        raise HTTPException(400, f"Sube como máximo {MAX_FILES} archivos a la vez.")
+    texts, images = [], []
+    for f in files:
+        name = f.filename or "archivo"
+        data = await f.read()
+        if is_image(name):
+            try:
+                images.append((name, image_blocks(data)))
+            except ValueError as e:
+                raise HTTPException(400, f"{name}: {e}")
+        elif name.lower().endswith((".xlsx", ".xlsm", ".csv")):
+            try:
+                texts.append(f"## Archivo: {name}\n" + workbook_to_text(data, name))
+            except ValueError as e:
+                raise HTTPException(400, f"{name}: {e}")
+            except Exception:
+                raise HTTPException(400, f"No se pudo leer «{name}». ¿Es un Excel válido?")
+        else:
+            raise HTTPException(400, f"«{name}»: sube un Excel (.xlsx, .csv) o una foto/captura (.png, .jpg, .heic…). "
+                                     "Si es un .xls antiguo, guárdalo como .xlsx.")
+    text = "\n\n".join(texts)
     try:
         athlete_list = intervals().list_athletes()
     except IntervalsError as e:
         raise HTTPException(502, str(e))
     try:
-        result = ai.parse_workouts(text, athlete_list, week_start, config.get("anthropic_api_key"))
+        result = ai.parse_workouts(text, athlete_list, week_start, config.get("anthropic_api_key"), images)
     except ai.AIError as e:
         raise HTTPException(502, str(e))
     valid_ids = {a["id"] for a in athlete_list}

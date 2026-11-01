@@ -395,21 +395,23 @@ function renderWellness(rows) {
 }
 
 /* ====================== Subir Excel ====================== */
-let up = {athletes: [], workouts: [], file: null};
+let up = {athletes: [], workouts: [], files: []};
+const IMG_RE = /\.(png|jpe?g|webp|gif|heic|heif|bmp|tiff?)$/i;
 
 function renderUpload() {
   view().innerHTML = `
   <h1>Subir Excel</h1>
-  <p class="sub">Sube el Excel con los entrenos de la semana, revisa lo que ha entendido la IA y prográmalo en el calendario de cada atleta.</p>
+  <p class="sub">Sube el Excel con los entrenos de la semana, o una foto o captura de pantalla del Excel. Revisa lo que ha entendido la IA y prográmalo en el calendario de cada atleta.</p>
   <section class="card">
     <div class="row">
       <div id="drop">
-        <input type="file" id="file" accept=".xlsx,.xlsm,.csv" hidden>
-        <div id="dropText"><strong>Elige el Excel</strong> o arrástralo aquí<br><small>.xlsx o .csv</small></div>
+        <input type="file" id="file" accept=".xlsx,.xlsm,.csv,image/*,.heic,.heif" multiple hidden>
+        <div id="dropText"><strong>Elige el Excel o la foto</strong> o arrástralo aquí<br><small>Excel (.xlsx, .csv) o imagen (captura, foto del móvil). Puedes subir varios a la vez.</small></div>
       </div>
       <div style="flex: 0 1 200px"><label for="week">Lunes de la semana</label><input type="date" id="week"></div>
       <div><button id="parseBtn" disabled>Interpretar entrenos</button></div>
     </div>
+    <div id="fileList" class="files"></div>
     <div id="status" class="status"></div>
   </section>
   <section id="review" hidden>
@@ -419,14 +421,24 @@ function renderUpload() {
     <div class="bar"><span id="summary"></span><button id="uploadBtn">Subir a Intervals.icu</button></div>
     <div id="uploadStatus" class="status"></div>
   </section>`;
-  up = {athletes: [], workouts: [], file: null};
+  up = {athletes: [], workouts: [], files: []};
   $("#week").value = addDays(monday(iso(new Date())), 7);
   const drop = $("#drop");
   drop.onclick = () => $("#file").click();
   drop.ondragover = e => { e.preventDefault(); drop.classList.add("over"); };
   drop.ondragleave = () => drop.classList.remove("over");
-  drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); setFile(e.dataTransfer.files[0]); };
-  $("#file").onchange = e => setFile(e.target.files[0]);
+  drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); addFiles(e.dataTransfer.files); };
+  $("#file").onchange = e => { addFiles(e.target.files); e.target.value = ""; };
+  $("#fileList").addEventListener("click", e => {
+    const b = e.target.closest("[data-rm]"); if (!b) return;
+    up.files.splice(+b.dataset.rm, 1); renderFiles();
+  });
+  // pegar una captura directamente (Ctrl+V / Cmd+V)
+  document.onpaste = e => {
+    if (!$("#drop")) return;
+    const imgs = [...(e.clipboardData?.files || [])].filter(f => f.type.startsWith("image/"));
+    if (imgs.length) addFiles(imgs.map((f, i) => new File([f], f.name && f.name !== "image.png" ? f.name : `captura-${Date.now()}-${i}.png`, {type: f.type})));
+  };
   $("#parseBtn").onclick = parseExcel;
   $("#uploadBtn").onclick = uploadWorkouts;
   $("#list").addEventListener("change", onListChange);
@@ -435,18 +447,33 @@ function renderUpload() {
     up.workouts[+box.dataset.i][el.dataset.f] = el.value;
   });
 }
-function setFile(f) {
-  if (!f) return;
-  up.file = f;
-  $("#dropText").innerHTML = `<strong>${esc(f.name)}</strong><br><small>Haz clic para cambiarlo</small>`;
-  $("#parseBtn").disabled = false;
+function addFiles(list) {
+  const ok = [...list].filter(f => IMG_RE.test(f.name) || /\.(xlsx|xlsm|csv)$/i.test(f.name));
+  const bad = [...list].length - ok.length;
+  up.files.push(...ok);
+  if (up.files.length > 10) up.files = up.files.slice(0, 10);
+  renderFiles();
+  if (bad) status($("#status"), "err", "Algún archivo no es un Excel (.xlsx, .csv) ni una imagen y no se ha añadido.");
+  else $("#status").className = "status";
+}
+function renderFiles() {
+  $("#fileList").innerHTML = up.files.map((f, i) => {
+    const isImg = IMG_RE.test(f.name) && f.type.startsWith("image/") && !/heic|heif/i.test(f.type);
+    const thumb = isImg ? `<img alt="" src="${URL.createObjectURL(f)}">` : `<span class="ficon">${IMG_RE.test(f.name) ? "IMG" : "XLS"}</span>`;
+    return `<div class="file">${thumb}<span class="fname">${esc(f.name)}</span><button class="ghost" data-rm="${i}" aria-label="Quitar ${esc(f.name)}">✕</button></div>`;
+  }).join("");
+  $("#dropText").innerHTML = up.files.length
+    ? `<strong>Añadir más archivos</strong><br><small>${up.files.length} archivo(s) listos · también puedes pegar una captura con Ctrl+V</small>`
+    : `<strong>Elige el Excel o la foto</strong> o arrástralo aquí<br><small>Excel (.xlsx, .csv) o imagen (captura, foto del móvil). Puedes subir varios a la vez.</small>`;
+  $("#parseBtn").disabled = !up.files.length;
 }
 async function parseExcel() {
   const btn = $("#parseBtn"); btn.disabled = true;
   $("#review").hidden = true;
-  status($("#status"), "info", '<span class="spinner"></span>Leyendo el Excel e interpretando los entrenos… puede tardar un minuto.');
+  const hasImg = up.files.some(f => IMG_RE.test(f.name));
+  status($("#status"), "info", `<span class="spinner"></span>${hasImg ? "Leyendo la imagen" : "Leyendo el Excel"} e interpretando los entrenos… puede tardar un minuto.`);
   try {
-    const fd = new FormData(); fd.append("file", up.file); fd.append("week_start", $("#week").value);
+    const fd = new FormData(); up.files.forEach(f => fd.append("files", f)); fd.append("week_start", $("#week").value);
     const data = await api("/api/parse", {method: "POST", body: fd});
     up.athletes = data.athletes;
     athletesCache = data.athletes;

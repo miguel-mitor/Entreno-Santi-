@@ -46,6 +46,14 @@ El entrenador te pasa el contenido de un Excel con los entrenamientos de la sema
 El formato del Excel puede ser cualquiera: tu trabajo es entenderlo y devolver un entreno por cada sesión
 de cada atleta y día, listo para subir al calendario de Intervals.icu.
 
+## Fotos y capturas
+A veces el entrenador no sube el Excel sino una foto o captura de pantalla del Excel (o varias).
+Tiene el mismo formato: lee la tabla de la imagen con cuidado, fila a fila y columna a columna,
+respetando a qué atleta y a qué día pertenece cada celda (cabeceras de fila y de columna).
+Si una captura larga llega troceada en varias imágenes consecutivas, las partes se solapan un poco:
+no dupliques las filas repetidas. Si algo no se lee bien (borroso, cortado, reflejos), no lo inventes:
+pon tu mejor lectura y explícalo en `warning`.
+
 ## Atletas
 Te doy la lista de atletas de Intervals.icu (id y nombre). Asigna a cada sesión el `athlete_id` del atleta
 correspondiente, emparejando por nombre aunque esté escrito distinto (apodos, solo nombre, sin tildes...).
@@ -112,22 +120,32 @@ class AIError(Exception):
     pass
 
 
-def parse_workouts(excel_text: str, athletes: list[dict], week_start: str, api_key: str = "") -> dict:
+def parse_workouts(excel_text: str, athletes: list[dict], week_start: str, api_key: str = "",
+                   images: list[tuple[str, list[dict]]] | None = None) -> dict:
     if not api_key:
         raise AIError("Falta la clave de Anthropic para interpretar el Excel. Añádela en Configuración.")
     client = anthropic.Anthropic(api_key=api_key)
     athletes_txt = "\n".join(f"- id={a['id']} · nombre={a['name']}" for a in athletes) or "(sin atletas)"
-    user = (
+    content: list[dict] = []
+    for name, blocks in images or []:
+        label = f"Imagen «{name}»" + (f" (troceada en {len(blocks)} partes, de arriba abajo)" if len(blocks) > 1 else "")
+        content.append({"type": "text", "text": label + ":"})
+        content.extend(blocks)
+    text = (
         f"Lunes de la semana a programar: {week_start}\n\n"
         f"Atletas en Intervals.icu:\n{athletes_txt}\n\n"
-        f"Contenido del Excel:\n<excel>\n{excel_text}\n</excel>"
     )
+    if excel_text:
+        text += f"Contenido del Excel:\n<excel>\n{excel_text}\n</excel>\n\n"
+    if images:
+        text += "Las imágenes de arriba son fotos o capturas del Excel con los entrenos."
+    content.append({"type": "text", "text": text})
     try:
         with client.beta.messages.stream(
             model=MODEL,
             max_tokens=64000,
             system=SYSTEM,
-            messages=[{"role": "user", "content": user}],
+            messages=[{"role": "user", "content": content}],
             output_config={
                 "effort": "high",
                 "format": {"type": "json_schema", "schema": SCHEMA},
@@ -148,7 +166,7 @@ def parse_workouts(excel_text: str, athletes: list[dict], week_start: str, api_k
     if msg.stop_reason == "refusal":
         raise AIError("El modelo no ha querido procesar este archivo.")
     if msg.stop_reason == "max_tokens":
-        raise AIError("El Excel tiene demasiados entrenos para una sola pasada; divídelo en varios archivos.")
+        raise AIError("Hay demasiados entrenos para una sola pasada; súbelos en varias tandas.")
     text = next((b.text for b in msg.content if b.type == "text"), None)
     if not text:
         raise AIError("La IA no devolvió resultado.")

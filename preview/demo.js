@@ -164,7 +164,7 @@
     if (path === "/api/parse") {
       await new Promise(r => setTimeout(r, 1500));
       const ws = opts.body.get("week_start");
-      return {athletes: ATHLETES.map(({id, name}) => ({id, name})), general_warnings: ["Vista previa: estos entrenos son de ejemplo, no se han leído de tu archivo."],
+      return {athletes: ATHLETES.map(({id, name}) => ({id, name})), general_warnings: ["Vista previa: estos entrenos son de ejemplo, no se han leído de tus archivos (Excel o fotos)."],
         workouts: [
           {athlete_id: "i101", athlete_name_in_excel: "Santi", date: add(ws, 1), sport: "Run", name: "Series 6x1000", description: "Calentamiento\n- 15m Z2 Pace\n\nSeries 6x\n- 1km 3:50/km Pace\n- 90s Z1 Pace\n\nVuelta a la calma\n- 10m Z1 Pace", warning: ""},
           {athlete_id: "i101", athlete_name_in_excel: "Santi", date: add(ws, 3), sport: "WeightTraining", name: "Fuerza 45'", description: "Fuerza general\n- 45m", warning: ""},

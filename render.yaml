@@ -1,0 +1,24 @@
+# Despliegue en Render (https://render.com): New → Blueprint → elige este repositorio.
+services:
+  - type: web
+    name: panel-entrenador
+    runtime: python
+    plan: starter            # siempre encendido y con disco para guardar las claves
+    region: frankfurt
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips "*"
+    healthCheckPath: /healthz
+    autoDeploy: true
+    disk:
+      name: datos
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: CONFIG_PATH
+        value: /var/data/config.json
+      - key: APP_PASSWORD      # contraseña para entrar en la app (Render te la pedirá)
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true

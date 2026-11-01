@@ -14,7 +14,12 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import ai, config, tracking
+import asyncio
+
+from fastapi import Request
+from fastapi.responses import RedirectResponse
+
+from . import ai, auth, config, tracking
 from .excel import workbook_to_text
 from .images import image_blocks, is_image
 from .intervals import Intervals, IntervalsError
@@ -24,6 +29,44 @@ load_dotenv()
 app = FastAPI(title="Excel → Intervals.icu")
 STATIC = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
+app.middleware("http")(auth.middleware)
+
+
+@app.get("/healthz")
+def healthz():
+    return {"ok": True}
+
+
+@app.get("/login")
+def login_form(request: Request):
+    if not auth.password() or auth.valid_token(request.cookies.get(auth.COOKIE)):
+        return RedirectResponse("/", status_code=303)
+    return auth.login_page()
+
+
+@app.post("/login")
+async def login(request: Request, password: str = Form("")):
+    if not auth.check_password(password):
+        await asyncio.sleep(1.5)  # frena intentos de adivinar la contraseña
+        page = auth.login_page("Contraseña incorrecta.")
+        page.status_code = 401
+        return page
+    resp = RedirectResponse("/", status_code=303)
+    resp.set_cookie(auth.COOKIE, auth.make_token(), max_age=auth.MAX_AGE, httponly=True,
+                    samesite="lax", secure=request.url.scheme == "https")
+    return resp
+
+
+@app.get("/logout")
+def logout():
+    resp = RedirectResponse("/login" if auth.password() else "/", status_code=303)
+    resp.delete_cookie(auth.COOKIE)
+    return resp
+
+
+@app.get("/api/session")
+def session_info():
+    return {"auth": bool(auth.password())}
 
 
 def intervals() -> Intervals:

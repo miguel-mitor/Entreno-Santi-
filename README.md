@@ -63,3 +63,26 @@ Abre http://localhost:8000
 
 `python3 preview/build.py` genera `preview/preview.html`, una versión autocontenida de la interfaz
 que funciona sin servidor ni claves, con atletas inventados (`preview/demo.js`).
+
+## Publicar en internet (Render)
+
+El repositorio incluye `render.yaml`, así que Render lo configura casi todo solo:
+
+1. Crea una cuenta en https://render.com (puedes entrar con tu cuenta de GitHub).
+2. **New → Blueprint** y elige el repositorio `Entreno-Santi-` (dale acceso a Render si te lo pide).
+3. Render te pedirá **APP_PASSWORD**: es la contraseña para entrar en la app. Pulsa **Apply**.
+4. Cuando termine (unos minutos) tendrás una dirección del tipo `https://panel-entrenador.onrender.com`.
+5. Entra con tu contraseña, ve a **Configuración** y pega la API key de Intervals.icu y la clave de Anthropic.
+
+Plan configurado: *Starter* (siempre encendida) con un disco de 1 GB donde se guardan las claves.
+Cada cambio que se sube a la rama `master` en GitHub se publica automáticamente.
+
+Alternativa gratuita: cambia `plan: starter` por `plan: free` y borra el bloque `disk`. La app se
+duerme tras 15 minutos sin uso (tarda ~1 minuto en despertar) y no conserva lo guardado en
+Configuración tras reiniciarse, así que las claves hay que ponerlas como variables de entorno
+(`INTERVALS_API_KEY`, `ANTHROPIC_API_KEY`) en el panel de Render.
+
+### Acceso con contraseña
+
+Si existe la variable `APP_PASSWORD`, la app pide esa contraseña para entrar (la sesión dura 30 días).
+Sin ella, la app queda abierta: úsalo así solo en tu ordenador.

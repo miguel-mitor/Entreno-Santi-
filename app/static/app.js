@@ -11,6 +11,7 @@ const DAYS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
 async function api(url, opts) {
   const r = await fetch(url, opts);
   const data = await r.json().catch(() => ({}));
+  if (r.status === 401 && /sesión/.test(data.detail || "")) { location.reload(); }
   if (!r.ok) throw new Error(data.detail || `Error ${r.status}`);
   return data;
 }
@@ -692,4 +693,5 @@ async function renderSettings() {
   });
 }
 
+fetch("/api/session").then(r => r.json()).then(d => { if (d.auth) $("#logout").hidden = false; }).catch(() => {});
 route();

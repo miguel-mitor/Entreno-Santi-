@@ -112,8 +112,10 @@ class AIError(Exception):
     pass
 
 
-def parse_workouts(excel_text: str, athletes: list[dict], week_start: str) -> dict:
-    client = anthropic.Anthropic()
+def parse_workouts(excel_text: str, athletes: list[dict], week_start: str, api_key: str = "") -> dict:
+    if not api_key:
+        raise AIError("Falta la clave de Anthropic para interpretar el Excel. Añádela en Configuración.")
+    client = anthropic.Anthropic(api_key=api_key)
     athletes_txt = "\n".join(f"- id={a['id']} · nombre={a['name']}" for a in athletes) or "(sin atletas)"
     user = (
         f"Lunes de la semana a programar: {week_start}\n\n"
@@ -135,7 +137,7 @@ def parse_workouts(excel_text: str, athletes: list[dict], week_start: str) -> di
         ) as stream:
             msg = stream.get_final_message()
     except anthropic.AuthenticationError as e:
-        raise AIError("La ANTHROPIC_API_KEY no es válida o falta en el archivo .env") from e
+        raise AIError("La clave de Anthropic no es válida. Revísala en Configuración.") from e
     except anthropic.RateLimitError as e:
         raise AIError("Límite de uso de la API de Anthropic alcanzado; prueba en un minuto.") from e
     except anthropic.APIStatusError as e:

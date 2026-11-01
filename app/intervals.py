@@ -13,7 +13,7 @@ class IntervalsError(Exception):
 class Intervals:
     def __init__(self, api_key: str):
         if not api_key:
-            raise IntervalsError("Falta INTERVALS_API_KEY en el archivo .env")
+            raise IntervalsError("Falta la API key de Intervals.icu. Añádela en Configuración.")
         self.client = httpx.Client(
             base_url=BASE, auth=("API_KEY", api_key), timeout=60.0
         )

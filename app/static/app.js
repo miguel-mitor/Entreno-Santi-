@@ -16,7 +16,11 @@ async function api(url, opts) {
 }
 function status(el, kind, html) { el.className = "status show " + kind; el.innerHTML = html; }
 const loading = txt => `<div class="status show info"><span class="spinner"></span>${esc(txt)}</div>`;
-const errorBox = e => `<div class="status show err">${esc(e.message || e)}</div>`;
+const errorBox = e => {
+  const msg = e.message || String(e);
+  const cfg = /Configuración|API key|rechazó/i.test(msg) ? ` <a href="#/configuracion">Ir a Configuración →</a>` : "";
+  return `<div class="status show err">${esc(msg)}${cfg}</div>`;
+};
 
 // Fechas (siempre en local, formato YYYY-MM-DD)
 const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -51,10 +55,11 @@ function route() {
   const [path, query] = location.hash.replace(/^#/, "").split("?");
   const params = new URLSearchParams(query || "");
   const parts = (path || "/").split("/").filter(Boolean);
-  document.querySelectorAll("nav a").forEach(a => a.classList.toggle("on",
-    (a.dataset.nav === "subir") === (parts[0] === "subir")));
+  const section = ["subir", "configuracion"].includes(parts[0]) ? parts[0] : "atletas";
+  document.querySelectorAll("nav a").forEach(a => a.classList.toggle("on", a.dataset.nav === section));
   closeModal();
   if (parts[0] === "subir") return renderUpload();
+  if (parts[0] === "configuracion") return renderSettings();
   if (parts[0] === "atleta" && parts[1]) return renderAthlete(decodeURIComponent(parts[1]), params.get("semana"));
   return renderOverview(params.get("semana"));
 }
@@ -452,7 +457,7 @@ async function parseExcel() {
     $("#review").hidden = false;
     status($("#status"), "ok", `He encontrado ${up.workouts.length} entrenos. Revísalos abajo antes de subirlos.`);
   } catch (e) {
-    status($("#status"), "err", esc(e.message));
+    status($("#status"), "err", errorBox(e).replace(/^<div[^>]*>|<\/div>$/g, ""));
   } finally { btn.disabled = false; }
 }
 const upName = id => up.athletes.find(a => a.id === id)?.name;
@@ -516,6 +521,73 @@ async function uploadWorkouts() {
   } catch (e) {
     status($("#uploadStatus"), "err", esc(e.message));
   } finally { btn.disabled = false; }
+}
+
+/* ====================== Configuración ====================== */
+async function renderSettings() {
+  view().innerHTML = `<h1>Configuración</h1>
+    <p class="sub">Conecta la app con tu cuenta de Intervals.icu. Las claves se guardan en el servidor de la app, no en tu navegador.</p>
+    <div id="cfg">${loading("Cargando…")}</div>`;
+  let st;
+  try { st = await api("/api/settings"); } catch (e) { $("#cfg").innerHTML = errorBox(e); return; }
+  const state = k => st[k].configured
+    ? `<span class="badge done">✓ Configurada (${esc(st[k].hint)})</span>`
+    : `<span class="badge missed">✕ Sin configurar</span>`;
+  $("#cfg").innerHTML = `
+    <section class="card" style="max-width:720px">
+      <h2 style="margin-top:0">Intervals.icu ${state("intervals_api_key")}</h2>
+      <p class="muted" style="margin-top:0">Necesaria para ver a tus atletas y programarles entrenos. Usa la clave de <b>tu cuenta de entrenador</b>.</p>
+      <ol class="muted" style="margin:0 0 14px;padding-left:20px;font-size:14px">
+        <li>Entra en <a href="https://intervals.icu/settings" target="_blank" rel="noopener">intervals.icu/settings</a>.</li>
+        <li>Baja hasta <b>Developer Settings</b> y pulsa <b>API Key</b> (créala si no tienes).</li>
+        <li>Copia la clave y pégala aquí.</li>
+      </ol>
+      <label for="k-int">API key de Intervals.icu</label>
+      <div class="row" style="align-items:center;flex-wrap:nowrap">
+        <input id="k-int" type="password" autocomplete="off" placeholder="${st.intervals_api_key.configured ? "Déjalo vacío para mantener la actual" : "Pega aquí tu API key"}">
+        <button class="ghost" type="button" data-show="k-int">Ver</button>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button id="save-int">Guardar y comprobar</button>
+        ${st.intervals_api_key.configured ? `<button class="ghost" id="test-int">Comprobar conexión</button>` : ""}
+      </div>
+      <div id="st-int" class="status"></div>
+    </section>
+    <section class="card" style="max-width:720px;margin-top:16px">
+      <h2 style="margin-top:0">IA para leer los Excel ${state("anthropic_api_key")}</h2>
+      <p class="muted" style="margin-top:0">Necesaria solo para <b>Subir Excel</b>. Consíguela en <a href="https://platform.claude.com/settings/keys" target="_blank" rel="noopener">platform.claude.com</a> → API Keys. Empieza por <code>sk-ant-</code>.</p>
+      <label for="k-ai">Clave de Anthropic</label>
+      <div class="row" style="align-items:center;flex-wrap:nowrap">
+        <input id="k-ai" type="password" autocomplete="off" placeholder="${st.anthropic_api_key.configured ? "Déjalo vacío para mantener la actual" : "sk-ant-…"}">
+        <button class="ghost" type="button" data-show="k-ai">Ver</button>
+      </div>
+      <div class="row" style="margin-top:12px"><button id="save-ai">Guardar</button></div>
+      <div id="st-ai" class="status"></div>
+    </section>`;
+  document.querySelectorAll("[data-show]").forEach(b => b.onclick = () => {
+    const i = $("#" + b.dataset.show); i.type = i.type === "password" ? "text" : "password"; b.textContent = i.type === "password" ? "Ver" : "Ocultar";
+  });
+  const save = async (field, input, out, btn) => {
+    const v = $(input).value.trim();
+    if (!v) { status($(out), "err", "Pega la clave primero."); return; }
+    $(btn).disabled = true;
+    status($(out), "info", '<span class="spinner"></span>Comprobando…');
+    try {
+      const r = await api("/api/settings", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({[field]: v})});
+      athletesCache = null;
+      await renderSettings();
+      status($(out), "ok", field === "intervals_api_key"
+        ? `Conectado con Intervals.icu: ${r.athletes} atleta(s) encontrados. <a href="#/">Ver atletas →</a>`
+        : "Clave guardada.");
+    } catch (e) { status($(out), "err", esc(e.message)); $(btn).disabled = false; }
+  };
+  $("#save-int").onclick = () => save("intervals_api_key", "#k-int", "#st-int", "#save-int");
+  $("#save-ai").onclick = () => save("anthropic_api_key", "#k-ai", "#st-ai", "#save-ai");
+  $("#test-int")?.addEventListener("click", async () => {
+    status($("#st-int"), "info", '<span class="spinner"></span>Comprobando…');
+    try { const r = await api("/api/settings/test", {method: "POST"}); status($("#st-int"), "ok", `Conexión correcta: ${r.athletes} atleta(s).`); }
+    catch (e) { status($("#st-int"), "err", esc(e.message)); }
+  });
 }
 
 route();

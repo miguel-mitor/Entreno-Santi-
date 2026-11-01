@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import datetime as dt
-import os
 import re
 import unicodedata
 from collections import defaultdict
@@ -15,7 +14,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import ai, tracking
+from . import ai, config, tracking
 from .excel import workbook_to_text
 from .intervals import Intervals, IntervalsError
 
@@ -28,7 +27,7 @@ app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 def intervals() -> Intervals:
     try:
-        return Intervals(os.getenv("INTERVALS_API_KEY", ""))
+        return Intervals(config.get("intervals_api_key"))
     except IntervalsError as e:
         raise HTTPException(400, str(e))
 
@@ -36,6 +35,44 @@ def intervals() -> Intervals:
 @app.get("/")
 def index():
     return FileResponse(STATIC / "index.html")
+
+
+# ---------- Configuración ----------
+
+class SettingsIn(BaseModel):
+    intervals_api_key: str | None = None
+    anthropic_api_key: str | None = None
+
+
+@app.get("/api/settings")
+def get_settings():
+    return config.status()
+
+
+@app.post("/api/settings")
+def save_settings(body: SettingsIn):
+    result: dict = {}
+    if body.intervals_api_key:
+        try:
+            athletes_found = Intervals(body.intervals_api_key.strip()).list_athletes()
+        except IntervalsError:
+            raise HTTPException(400, "Intervals.icu no acepta esa clave. Comprueba que la has copiado entera "
+                                     "desde intervals.icu/settings → Developer Settings.")
+        except Exception:
+            raise HTTPException(502, "No se ha podido contactar con Intervals.icu. Inténtalo de nuevo.")
+        result["athletes"] = len(athletes_found)
+    if body.anthropic_api_key and not body.anthropic_api_key.strip().startswith("sk-ant-"):
+        raise HTTPException(400, "La clave de Anthropic debe empezar por «sk-ant-».")
+    config.save({k: v for k, v in body.model_dump().items() if v})
+    return {**config.status(), **result}
+
+
+@app.post("/api/settings/test")
+def test_settings():
+    try:
+        return {"athletes": len(intervals().list_athletes())}
+    except IntervalsError as e:
+        raise HTTPException(400, str(e))
 
 
 @app.get("/api/athletes")
@@ -66,7 +103,7 @@ async def parse(file: UploadFile = File(...), week_start: str = Form(...)):
     except IntervalsError as e:
         raise HTTPException(502, str(e))
     try:
-        result = ai.parse_workouts(text, athlete_list, week_start)
+        result = ai.parse_workouts(text, athlete_list, week_start, config.get("anthropic_api_key"))
     except ai.AIError as e:
         raise HTTPException(502, str(e))
     valid_ids = {a["id"] for a in athlete_list}

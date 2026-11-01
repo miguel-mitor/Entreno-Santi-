@@ -33,7 +33,7 @@ Necesitas Python 3.10 o superior.
 
 ```bash
 pip install -r requirements.txt
-cp .env.example .env      # y rellena las dos claves
+# (opcional) cp .env.example .env  — también puedes poner las claves desde Configuración
 uvicorn app.main:app --port 8000
 ```
 
@@ -54,3 +54,8 @@ Abre http://localhost:8000
 - `app/intervals.py` — llamadas a la API de Intervals.icu.
 - `app/tracking.py` — cruza lo programado con lo realizado y prepara las métricas.
 - `app/static/` — interfaz (`index.html`, `app.js`, `styles.css`).
+
+## Vista previa con datos de ejemplo
+
+`python3 preview/build.py` genera `preview/preview.html`, una versión autocontenida de la interfaz
+que funciona sin servidor ni claves, con atletas inventados (`preview/demo.js`).

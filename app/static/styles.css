@@ -153,9 +153,9 @@ table.simple td { padding: 6px 8px; border-bottom: 1px solid var(--grid); white-
 .zones .b > i { display: block; height: 100%; border-radius: 0 4px 4px 0; }
 
 /* Subida de Excel */
-#drop { border: 2px dashed var(--line); border-radius: 10px; padding: 26px; text-align: center; cursor: pointer; flex: 1 1 320px; }
-#drop.over { border-color: var(--accent); }
-#drop strong { color: var(--accent); }
+.drop { border: 2px dashed var(--line); border-radius: 10px; padding: 26px; text-align: center; cursor: pointer; flex: 1 1 320px; }
+.drop.over { border-color: var(--accent); }
+.drop strong { color: var(--accent); }
 .warnings { background: var(--warn-bg); color: var(--warn); border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; }
 .warnings ul { margin: 4px 0 0; padding-left: 18px; }
 .athlete-group { margin-bottom: 22px; }
@@ -178,3 +178,6 @@ table.simple td { padding: 6px 8px; border-bottom: 1px solid var(--grid); white-
 .file .ficon { display: grid; place-items: center; font-size: 11px; font-weight: 700; color: var(--muted); background: var(--card); border: 1px solid var(--line); }
 .file .fname { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
 .file button { padding: 4px 9px; }
+label > input, label > select { margin-top: 4px; font-size: 15px; }
+.w.fixed .w-grid { grid-template-columns: 1fr 1fr 2fr auto; }
+@media (max-width: 760px) { .w.fixed .w-grid { grid-template-columns: 1fr 1fr; } }

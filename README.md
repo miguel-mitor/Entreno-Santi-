@@ -7,6 +7,8 @@ App web para entrenadores con dos partes:
   Al entrar en un atleta ves su calendario semanal, cada entreno con lo programado frente a lo
   realizado (ritmo, FC, potencia, carga, zonas, RPE, sensaciones, comentarios…) y la evolución
   de los últimos 90 días (forma física/fatiga, frescura, HRV, FC en reposo, sueño, peso).
+  Desde la ficha también puedes **subir el Excel o la foto del plan de ese atleta** (botón «Subir entrenos»):
+  todos los entrenos se le asignan a él.
 - **Subir Excel**: sueltas un Excel con los entrenos de la semana (o una foto / captura de pantalla del Excel), la IA (Claude) lo interpreta
   y, tras revisarlo, se programa en el calendario de cada atleta en Intervals.icu como entreno
   estructurado (que el atleta puede mandar a su reloj).

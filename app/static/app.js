@@ -14,7 +14,11 @@ async function api(url, opts) {
   if (!r.ok) throw new Error(data.detail || `Error ${r.status}`);
   return data;
 }
-function status(el, kind, html) { el.className = "status show " + kind; el.innerHTML = html; }
+function status(el, kind, html) {
+  el.classList.remove("err", "info", "ok");
+  el.classList.add("status", "show", kind);
+  el.innerHTML = html;
+}
 const loading = txt => `<div class="status show info"><span class="spinner"></span>${esc(txt)}</div>`;
 const errorBox = e => {
   const msg = e.message || String(e);
@@ -143,13 +147,42 @@ async function renderAthlete(id, semana) {
     <p style="margin:0 0 8px"><a href="#/?semana=${start}" class="muted">← Todos los atletas</a></p>
     <div class="pagehead">
       <div><h1>${esc(name)}</h1><p class="sub" style="margin:0"><a href="https://intervals.icu/athlete/${esc(id)}/calendar" target="_blank" rel="noopener" class="muted">Abrir en Intervals.icu ↗</a></p></div>
-      ${weekNav(start, addDays(start, 6), href)}
+      <div class="row" style="align-items:center">
+        <button id="upToggle" aria-expanded="false">Subir entrenos</button>
+        ${weekNav(start, addDays(start, 6), href)}
+      </div>
+    </div>
+    <div id="athUpload" hidden style="margin-bottom:22px">
+      <p class="muted" style="margin:0 0 10px">Sube el Excel o la foto con el plan de <b>${esc(name)}</b>. Todos los entrenos se le asignarán a este atleta.</p>
+      <div id="athUploader"></div>
     </div>
     <div id="wk">${loading("Cargando semana…")}</div>
     <h2>Evolución (últimos 90 días)</h2>
     <div id="well">${loading("Cargando métricas…")}</div>`;
-  api(`/api/athletes/${encodeURIComponent(id)}/week?start=${start}`)
+  const loadWeek = () => api(`/api/athletes/${encodeURIComponent(id)}/week?start=${start}`)
     .then(renderWeek).catch(e => $("#wk").innerHTML = errorBox(e));
+  loadWeek();
+  let mounted = false;
+  const thisMon = monday(iso(new Date()));
+  $("#upToggle").onclick = () => {
+    const panel = $("#athUpload"), open = panel.hidden;
+    panel.hidden = !open;
+    $("#upToggle").setAttribute("aria-expanded", String(open));
+    $("#upToggle").textContent = open ? "Cerrar subida" : "Subir entrenos";
+    if (open && !mounted) {
+      mounted = true;
+      // por defecto: la semana que estás viendo si es futura; si no, la próxima
+      const def = start > thisMon ? start : addDays(thisMon, 7);
+      mountUploader($("#athUploader"), {athlete: {id, name}, week: def, onUploaded: wk => {
+        if (wk === start) loadWeek();
+        else {
+          const st = $("#athUploader .st-up");
+          st.insertAdjacentHTML("beforeend", `<br><a href="${href(wk)}">Ver la semana del ${fmtDay(wk)} →</a>`);
+        }
+      }});
+    }
+    if (open) panel.scrollIntoView({behavior: "smooth", block: "start"});
+  };
   api(`/api/athletes/${encodeURIComponent(id)}/wellness?days=90`)
     .then(renderWellness).catch(e => $("#well").innerHTML = errorBox(e));
 }
@@ -394,160 +427,202 @@ function renderWellness(rows) {
     <tbody>${last.map(r => `<tr>${used.map(([, f]) => `<td>${f(r)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
 }
 
-/* ====================== Subir Excel ====================== */
-let up = {athletes: [], workouts: [], files: []};
+/* ====================== Subir Excel / fotos ====================== */
 const IMG_RE = /\.(png|jpe?g|webp|gif|heic|heif|bmp|tiff?)$/i;
+const DROP_HINT = `<strong>Elige el Excel o la foto</strong> o arrástralo aquí<br><small>Excel (.xlsx, .csv) o imagen (captura, foto del móvil). Puedes subir varios a la vez.</small>`;
+let activeUploader = null; // recibe las capturas pegadas con Ctrl+V
+
+document.addEventListener("paste", e => {
+  if (!activeUploader || !activeUploader.root.isConnected) return;
+  const imgs = [...(e.clipboardData?.files || [])].filter(f => f.type.startsWith("image/"));
+  if (imgs.length) activeUploader.add(imgs.map((f, i) => new File([f], f.name && f.name !== "image.png" ? f.name : `captura-${Date.now()}-${i}.png`, {type: f.type})));
+});
+
+/**
+ * Componente de subida. opts.athlete = {id, name} fija el atleta (subida desde su ficha).
+ * opts.week = lunes por defecto. opts.onUploaded(weekStart) tras subir.
+ */
+function mountUploader(root, {athlete = null, week, onUploaded} = {}) {
+  const st = {athletes: [], workouts: [], files: []};
+  const q = s => root.querySelector(s);
+  root.innerHTML = `
+    <section class="card">
+      <div class="row">
+        <div class="drop">
+          <input type="file" class="file-in" accept=".xlsx,.xlsm,.csv,image/*,.heic,.heif" multiple hidden>
+          <div class="drop-text">${DROP_HINT}</div>
+        </div>
+        <div style="flex: 0 1 200px"><label>Lunes de la semana<input type="date" class="week-in"></label></div>
+        <div><button class="parse-btn" disabled>Interpretar entrenos</button></div>
+      </div>
+      <div class="files"></div>
+      <div class="status st-parse"></div>
+    </section>
+    <section class="review" hidden>
+      <h2>Revisa los entrenos${athlete ? ` de ${esc(athlete.name)}` : ""}</h2>
+      <div class="gen-warn"></div>
+      <div class="w-list"></div>
+      <div class="bar"><span class="summary"></span><span class="row" style="gap:8px;align-items:center"><span class="confirm-q muted" hidden></span><button class="ghost cancel-btn" hidden>Cancelar</button><button class="upload-btn">Subir a Intervals.icu</button></span></div>
+      <div class="status st-up"></div>
+    </section>`;
+  q(".week-in").value = week;
+  const drop = q(".drop"), fileIn = q(".file-in");
+  drop.onclick = () => fileIn.click();
+  drop.ondragover = e => { e.preventDefault(); drop.classList.add("over"); };
+  drop.ondragleave = () => drop.classList.remove("over");
+  drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); add(e.dataTransfer.files); };
+  fileIn.onchange = e => { add(e.target.files); e.target.value = ""; };
+  q(".files").addEventListener("click", e => {
+    const b = e.target.closest("[data-rm]"); if (!b) return;
+    st.files.splice(+b.dataset.rm, 1); renderFiles();
+  });
+
+  function add(list) {
+    const ok = [...list].filter(f => IMG_RE.test(f.name) || /\.(xlsx|xlsm|csv)$/i.test(f.name));
+    const bad = [...list].length - ok.length;
+    st.files.push(...ok);
+    if (st.files.length > 10) st.files = st.files.slice(0, 10);
+    renderFiles();
+    if (bad) status(q(".st-parse"), "err", "Algún archivo no es un Excel (.xlsx, .csv) ni una imagen y no se ha añadido.");
+    else q(".st-parse").classList.remove("show");
+  }
+  function renderFiles() {
+    q(".files").innerHTML = st.files.map((f, i) => {
+      const isImg = IMG_RE.test(f.name) && f.type.startsWith("image/") && !/heic|heif/i.test(f.type);
+      const thumb = isImg ? `<img alt="" src="${URL.createObjectURL(f)}">` : `<span class="ficon">${IMG_RE.test(f.name) ? "IMG" : "XLS"}</span>`;
+      return `<div class="file">${thumb}<span class="fname">${esc(f.name)}</span><button class="ghost" data-rm="${i}" aria-label="Quitar ${esc(f.name)}">✕</button></div>`;
+    }).join("");
+    q(".drop-text").innerHTML = st.files.length
+      ? `<strong>Añadir más archivos</strong><br><small>${st.files.length} archivo(s) listos · también puedes pegar una captura con Ctrl+V</small>`
+      : DROP_HINT;
+    q(".parse-btn").disabled = !st.files.length;
+  }
+
+  q(".parse-btn").onclick = async () => {
+    const btn = q(".parse-btn"); btn.disabled = true;
+    q(".review").hidden = true;
+    const hasImg = st.files.some(f => IMG_RE.test(f.name));
+    status(q(".st-parse"), "info", `<span class="spinner"></span>${hasImg ? "Leyendo la imagen" : "Leyendo el Excel"} e interpretando los entrenos… puede tardar un minuto.`);
+    try {
+      const fd = new FormData();
+      st.files.forEach(f => fd.append("files", f));
+      fd.append("week_start", q(".week-in").value);
+      if (athlete) fd.append("athlete_id", athlete.id);
+      const data = await api("/api/parse", {method: "POST", body: fd});
+      st.athletes = data.athletes;
+      athletesCache = data.athletes;
+      st.workouts = data.workouts.map(w => ({...w, include: true})).sort((a, b) => a.date.localeCompare(b.date));
+      q(".gen-warn").innerHTML = data.general_warnings.length
+        ? `<div class="warnings"><strong>A revisar:</strong><ul>${data.general_warnings.map(w => `<li>${esc(w)}</li>`).join("")}</ul></div>` : "";
+      renderReview();
+      q(".review").hidden = false;
+      status(q(".st-parse"), "ok", `He encontrado ${st.workouts.length} entrenos. Revísalos abajo antes de subirlos.`);
+    } catch (e) {
+      status(q(".st-parse"), "err", errorBox(e).replace(/^<div[^>]*>|<\/div>$/g, ""));
+    } finally { btn.disabled = false; }
+  };
+
+  const nameOf = id => st.athletes.find(a => a.id === id)?.name;
+  function renderReview() {
+    if (athlete) {
+      q(".w-list").innerHTML = st.workouts.map((_, i) => card(i)).join("") || "<p>No se ha encontrado ningún entreno.</p>";
+    } else {
+      const groups = {};
+      st.workouts.forEach((w, i) => { (groups[w.athlete_id || ""] ||= []).push(i); });
+      const keys = Object.keys(groups).sort((a, b) => (a === "" ? -1 : b === "" ? 1 : (nameOf(a) || "").localeCompare(nameOf(b) || "")));
+      q(".w-list").innerHTML = keys.map(k => `
+        <div class="athlete-group">
+          <h3>${k ? esc(nameOf(k)) : "⚠️ Sin atleta asignado"} · ${groups[k].length} entrenos</h3>
+          ${groups[k].map(card).join("")}
+        </div>`).join("") || "<p>No se ha encontrado ningún entreno.</p>";
+    }
+    summary();
+  }
+  function card(i) {
+    const w = st.workouts[i];
+    const plan = ["Run", "Ride", "VirtualRide", "Swim", "WeightTraining", "Walk", "Hike", "Rowing", "Yoga", "NordicSki", "Workout"];
+    const sportOpts = plan.map(v => `<option value="${v}" ${v === w.sport ? "selected" : ""}>${sportName(v)}</option>`).join("");
+    const day = w.date ? fmtDay(w.date, {weekday: "long"}) : "";
+    const athField = athlete ? "" : `<div><label>Atleta${w.athlete_name_in_excel ? ` (Excel: ${esc(w.athlete_name_in_excel)})` : ""}<select data-f="athlete_id"><option value="">— Elige atleta —</option>${
+      st.athletes.map(a => `<option value="${esc(a.id)}" ${a.id === w.athlete_id ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</select></label></div>`;
+    return `<div class="w ${w.include ? "" : "off"}${athlete ? " fixed" : ""}" data-i="${i}">
+      <div class="w-grid">
+        ${athField}
+        <div><label>Fecha · ${esc(day)}<input type="date" data-f="date" value="${esc(w.date)}"></label></div>
+        <div><label>Deporte<select data-f="sport">${sportOpts}</select></label></div>
+        <div class="name"><label>Nombre<input data-f="name" value="${esc(w.name)}"></label></div>
+        <label class="inc"><input type="checkbox" data-f="include" ${w.include ? "checked" : ""}> Subir</label>
+      </div>
+      <textarea data-f="description" spellcheck="false" aria-label="Pasos del entreno">${esc(w.description)}</textarea>
+      ${w.warning ? `<div class="w-warn">⚠️ ${esc(w.warning)}</div>` : ""}
+    </div>`;
+  }
+  q(".w-list").addEventListener("change", e => {
+    const el = e.target, box = el.closest(".w"); if (!box || !el.dataset.f) return;
+    const w = st.workouts[+box.dataset.i];
+    w[el.dataset.f] = el.type === "checkbox" ? el.checked : el.value;
+    if (["athlete_id", "include", "date"].includes(el.dataset.f)) renderReview(); else summary();
+  });
+  q(".w-list").addEventListener("input", e => {
+    const el = e.target, box = el.closest(".w"); if (!box || !el.dataset.f || el.type === "checkbox") return;
+    st.workouts[+box.dataset.i][el.dataset.f] = el.value;
+  });
+  function summary() {
+    const sel = st.workouts.filter(w => w.include);
+    const missing = sel.filter(w => !w.athlete_id).length;
+    const n = new Set(sel.map(w => w.athlete_id).filter(Boolean)).size;
+    q(".summary").textContent = athlete ? `${sel.length} entrenos para ${athlete.name}`
+      : `${sel.length} entrenos para ${n} atleta(s)` + (missing ? ` · ${missing} sin atleta` : "");
+    q(".upload-btn").disabled = !sel.length || missing > 0;
+    resetConfirm();
+  }
+  // Confirmación en la propia página (dos pasos) en lugar de un diálogo
+  function resetConfirm() {
+    q(".confirm-q").hidden = true; q(".cancel-btn").hidden = true;
+    q(".upload-btn").textContent = "Subir a Intervals.icu"; q(".upload-btn").dataset.armed = "";
+  }
+  q(".cancel-btn").onclick = resetConfirm;
+  q(".upload-btn").onclick = async () => {
+    const sel = st.workouts.filter(w => w.include);
+    const btn = q(".upload-btn");
+    if (!btn.dataset.armed) {
+      const n = new Set(sel.map(w => w.athlete_id)).size;
+      q(".confirm-q").textContent = athlete ? `¿Programar ${sel.length} entrenos en el calendario de ${athlete.name}?`
+        : `¿Programar ${sel.length} entrenos en ${n} calendario(s)?`;
+      q(".confirm-q").hidden = false; q(".cancel-btn").hidden = false;
+      btn.textContent = "Sí, subir"; btn.dataset.armed = "1";
+      return;
+    }
+    resetConfirm();
+    btn.disabled = true;
+    status(q(".st-up"), "info", '<span class="spinner"></span>Subiendo a Intervals.icu…');
+    const wk = monday(sel.map(w => w.date).sort()[0] || q(".week-in").value);
+    try {
+      const data = await api("/api/upload", {method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({workouts: sel.map(({athlete_id, date, sport, name, description}) => ({athlete_id, date, sport, name, description}))})});
+      const ok = data.results.filter(r => r.ok), bad = data.results.filter(r => !r.ok);
+      let html = ok.map(r => `✅ ${esc(nameOf(r.athlete_id))}: ${r.count} entrenos programados` +
+        (athlete ? "" : ` · <a href="#/atleta/${encodeURIComponent(r.athlete_id)}?semana=${wk}">ver semana</a>`)).join("<br>");
+      if (bad.length) html += (html ? "<br>" : "") + bad.map(r => `❌ ${esc(nameOf(r.athlete_id))}: ${esc(r.error)}`).join("<br>");
+      if (ok.length && !athlete) html += `<br><a href="#/?semana=${wk}">Ver todos los atletas →</a>`;
+      status(q(".st-up"), bad.length ? "err" : "ok", html);
+      if (ok.length && onUploaded) onUploaded(wk);
+    } catch (e) {
+      status(q(".st-up"), "err", esc(e.message));
+    } finally { btn.disabled = false; }
+  };
+  const api_ = {root, add};
+  activeUploader = api_;
+  return api_;
+}
 
 function renderUpload() {
   view().innerHTML = `
-  <h1>Subir Excel</h1>
-  <p class="sub">Sube el Excel con los entrenos de la semana, o una foto o captura de pantalla del Excel. Revisa lo que ha entendido la IA y prográmalo en el calendario de cada atleta.</p>
-  <section class="card">
-    <div class="row">
-      <div id="drop">
-        <input type="file" id="file" accept=".xlsx,.xlsm,.csv,image/*,.heic,.heif" multiple hidden>
-        <div id="dropText"><strong>Elige el Excel o la foto</strong> o arrástralo aquí<br><small>Excel (.xlsx, .csv) o imagen (captura, foto del móvil). Puedes subir varios a la vez.</small></div>
-      </div>
-      <div style="flex: 0 1 200px"><label for="week">Lunes de la semana</label><input type="date" id="week"></div>
-      <div><button id="parseBtn" disabled>Interpretar entrenos</button></div>
-    </div>
-    <div id="fileList" class="files"></div>
-    <div id="status" class="status"></div>
-  </section>
-  <section id="review" hidden>
-    <h2>Revisa los entrenos</h2>
-    <div id="generalWarnings"></div>
-    <div id="list"></div>
-    <div class="bar"><span id="summary"></span><button id="uploadBtn">Subir a Intervals.icu</button></div>
-    <div id="uploadStatus" class="status"></div>
-  </section>`;
-  up = {athletes: [], workouts: [], files: []};
-  $("#week").value = addDays(monday(iso(new Date())), 7);
-  const drop = $("#drop");
-  drop.onclick = () => $("#file").click();
-  drop.ondragover = e => { e.preventDefault(); drop.classList.add("over"); };
-  drop.ondragleave = () => drop.classList.remove("over");
-  drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); addFiles(e.dataTransfer.files); };
-  $("#file").onchange = e => { addFiles(e.target.files); e.target.value = ""; };
-  $("#fileList").addEventListener("click", e => {
-    const b = e.target.closest("[data-rm]"); if (!b) return;
-    up.files.splice(+b.dataset.rm, 1); renderFiles();
-  });
-  // pegar una captura directamente (Ctrl+V / Cmd+V)
-  document.onpaste = e => {
-    if (!$("#drop")) return;
-    const imgs = [...(e.clipboardData?.files || [])].filter(f => f.type.startsWith("image/"));
-    if (imgs.length) addFiles(imgs.map((f, i) => new File([f], f.name && f.name !== "image.png" ? f.name : `captura-${Date.now()}-${i}.png`, {type: f.type})));
-  };
-  $("#parseBtn").onclick = parseExcel;
-  $("#uploadBtn").onclick = uploadWorkouts;
-  $("#list").addEventListener("change", onListChange);
-  $("#list").addEventListener("input", e => {
-    const el = e.target, box = el.closest(".w"); if (!box || !el.dataset.f || el.type === "checkbox") return;
-    up.workouts[+box.dataset.i][el.dataset.f] = el.value;
-  });
-}
-function addFiles(list) {
-  const ok = [...list].filter(f => IMG_RE.test(f.name) || /\.(xlsx|xlsm|csv)$/i.test(f.name));
-  const bad = [...list].length - ok.length;
-  up.files.push(...ok);
-  if (up.files.length > 10) up.files = up.files.slice(0, 10);
-  renderFiles();
-  if (bad) status($("#status"), "err", "Algún archivo no es un Excel (.xlsx, .csv) ni una imagen y no se ha añadido.");
-  else $("#status").className = "status";
-}
-function renderFiles() {
-  $("#fileList").innerHTML = up.files.map((f, i) => {
-    const isImg = IMG_RE.test(f.name) && f.type.startsWith("image/") && !/heic|heif/i.test(f.type);
-    const thumb = isImg ? `<img alt="" src="${URL.createObjectURL(f)}">` : `<span class="ficon">${IMG_RE.test(f.name) ? "IMG" : "XLS"}</span>`;
-    return `<div class="file">${thumb}<span class="fname">${esc(f.name)}</span><button class="ghost" data-rm="${i}" aria-label="Quitar ${esc(f.name)}">✕</button></div>`;
-  }).join("");
-  $("#dropText").innerHTML = up.files.length
-    ? `<strong>Añadir más archivos</strong><br><small>${up.files.length} archivo(s) listos · también puedes pegar una captura con Ctrl+V</small>`
-    : `<strong>Elige el Excel o la foto</strong> o arrástralo aquí<br><small>Excel (.xlsx, .csv) o imagen (captura, foto del móvil). Puedes subir varios a la vez.</small>`;
-  $("#parseBtn").disabled = !up.files.length;
-}
-async function parseExcel() {
-  const btn = $("#parseBtn"); btn.disabled = true;
-  $("#review").hidden = true;
-  const hasImg = up.files.some(f => IMG_RE.test(f.name));
-  status($("#status"), "info", `<span class="spinner"></span>${hasImg ? "Leyendo la imagen" : "Leyendo el Excel"} e interpretando los entrenos… puede tardar un minuto.`);
-  try {
-    const fd = new FormData(); up.files.forEach(f => fd.append("files", f)); fd.append("week_start", $("#week").value);
-    const data = await api("/api/parse", {method: "POST", body: fd});
-    up.athletes = data.athletes;
-    athletesCache = data.athletes;
-    up.workouts = data.workouts.map(w => ({...w, include: true})).sort((a, b) => a.date.localeCompare(b.date));
-    $("#generalWarnings").innerHTML = data.general_warnings.length
-      ? `<div class="warnings"><strong>A revisar:</strong><ul>${data.general_warnings.map(w => `<li>${esc(w)}</li>`).join("")}</ul></div>` : "";
-    renderReview();
-    $("#review").hidden = false;
-    status($("#status"), "ok", `He encontrado ${up.workouts.length} entrenos. Revísalos abajo antes de subirlos.`);
-  } catch (e) {
-    status($("#status"), "err", errorBox(e).replace(/^<div[^>]*>|<\/div>$/g, ""));
-  } finally { btn.disabled = false; }
-}
-const upName = id => up.athletes.find(a => a.id === id)?.name;
-function renderReview() {
-  const groups = {};
-  up.workouts.forEach((w, i) => { (groups[w.athlete_id || ""] ||= []).push(i); });
-  const keys = Object.keys(groups).sort((a, b) => (a === "" ? -1 : b === "" ? 1 : (upName(a) || "").localeCompare(upName(b) || "")));
-  $("#list").innerHTML = keys.map(k => `
-    <div class="athlete-group">
-      <h3>${k ? esc(upName(k)) : "⚠️ Sin atleta asignado"} · ${groups[k].length} entrenos</h3>
-      ${groups[k].map(reviewCard).join("")}
-    </div>`).join("") || "<p>No se ha encontrado ningún entreno.</p>";
-  reviewSummary();
-}
-function reviewCard(i) {
-  const w = up.workouts[i];
-  const athOpts = `<option value="">— Elige atleta —</option>` + up.athletes.map(a => `<option value="${esc(a.id)}" ${a.id === w.athlete_id ? "selected" : ""}>${esc(a.name)}</option>`).join("");
-  const plan = ["Run", "Ride", "VirtualRide", "Swim", "WeightTraining", "Walk", "Hike", "Rowing", "Yoga", "NordicSki", "Workout"];
-  const sportOpts = plan.map(v => `<option value="${v}" ${v === w.sport ? "selected" : ""}>${sportName(v)}</option>`).join("");
-  const day = w.date ? fmtDay(w.date, {weekday: "long"}) : "";
-  return `<div class="w ${w.include ? "" : "off"}" data-i="${i}">
-    <div class="w-grid">
-      <div><label>Atleta${w.athlete_name_in_excel ? ` (Excel: ${esc(w.athlete_name_in_excel)})` : ""}</label><select data-f="athlete_id">${athOpts}</select></div>
-      <div><label>Fecha · ${esc(day)}</label><input type="date" data-f="date" value="${esc(w.date)}"></div>
-      <div><label>Deporte</label><select data-f="sport">${sportOpts}</select></div>
-      <div class="name"><label>Nombre</label><input data-f="name" value="${esc(w.name)}"></div>
-      <label class="inc"><input type="checkbox" data-f="include" ${w.include ? "checked" : ""}> Subir</label>
-    </div>
-    <textarea data-f="description" spellcheck="false">${esc(w.description)}</textarea>
-    ${w.warning ? `<div class="w-warn">⚠️ ${esc(w.warning)}</div>` : ""}
-  </div>`;
-}
-function onListChange(e) {
-  const el = e.target, box = el.closest(".w"); if (!box || !el.dataset.f) return;
-  const w = up.workouts[+box.dataset.i];
-  w[el.dataset.f] = el.type === "checkbox" ? el.checked : el.value;
-  if (["athlete_id", "include", "date"].includes(el.dataset.f)) renderReview(); else reviewSummary();
-}
-function reviewSummary() {
-  const sel = up.workouts.filter(w => w.include);
-  const missing = sel.filter(w => !w.athlete_id).length;
-  const n = new Set(sel.map(w => w.athlete_id).filter(Boolean)).size;
-  $("#summary").textContent = `${sel.length} entrenos para ${n} atleta(s)` + (missing ? ` · ${missing} sin atleta` : "");
-  $("#uploadBtn").disabled = !sel.length || missing > 0;
-}
-async function uploadWorkouts() {
-  const sel = up.workouts.filter(w => w.include);
-  const n = new Set(sel.map(w => w.athlete_id)).size;
-  if (!confirm(`¿Subir ${sel.length} entrenos a los calendarios de ${n} atleta(s) en Intervals.icu?`)) return;
-  const btn = $("#uploadBtn"); btn.disabled = true;
-  status($("#uploadStatus"), "info", '<span class="spinner"></span>Subiendo a Intervals.icu…');
-  const week = monday(sel.map(w => w.date).sort()[0] || $("#week").value);
-  try {
-    const data = await api("/api/upload", {method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({workouts: sel.map(({athlete_id, date, sport, name, description}) => ({athlete_id, date, sport, name, description}))})});
-    const ok = data.results.filter(r => r.ok), bad = data.results.filter(r => !r.ok);
-    let html = ok.map(r => `✅ ${esc(upName(r.athlete_id))}: ${r.count} entrenos programados · <a href="#/atleta/${encodeURIComponent(r.athlete_id)}?semana=${week}">ver semana</a>`).join("<br>");
-    if (bad.length) html += (html ? "<br>" : "") + bad.map(r => `❌ ${esc(upName(r.athlete_id))}: ${esc(r.error)}`).join("<br>");
-    if (ok.length) html += `<br><a href="#/?semana=${week}">Ver todos los atletas →</a>`;
-    status($("#uploadStatus"), bad.length ? "err" : "ok", html);
-  } catch (e) {
-    status($("#uploadStatus"), "err", esc(e.message));
-  } finally { btn.disabled = false; }
+    <h1>Subir Excel</h1>
+    <p class="sub">Sube el Excel con los entrenos de la semana, o una foto o captura de pantalla del Excel, de uno o varios atletas.
+    Si haces un Excel distinto para cada atleta, también puedes subirlo desde la ficha del atleta.</p>
+    <div id="uploader"></div>`;
+  mountUploader($("#uploader"), {week: addDays(monday(iso(new Date())), 7)});
 }
 
 /* ====================== Configuración ====================== */

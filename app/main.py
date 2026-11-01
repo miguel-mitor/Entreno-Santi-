@@ -88,7 +88,8 @@ MAX_FILES = 10
 
 
 @app.post("/api/parse")
-async def parse(files: list[UploadFile] = File(...), week_start: str = Form(...)):
+async def parse(files: list[UploadFile] = File(...), week_start: str = Form(...),
+                athlete_id: str | None = Form(None)):
     try:
         dt.date.fromisoformat(week_start)
     except ValueError:
@@ -119,10 +120,18 @@ async def parse(files: list[UploadFile] = File(...), week_start: str = Form(...)
         athlete_list = intervals().list_athletes()
     except IntervalsError as e:
         raise HTTPException(502, str(e))
+    fixed = None
+    if athlete_id:
+        fixed = next((a for a in athlete_list if a["id"] == athlete_id), None)
+        if not fixed:
+            raise HTTPException(400, "Ese atleta no está entre los que entrenas en Intervals.icu.")
     try:
-        result = ai.parse_workouts(text, athlete_list, week_start, config.get("anthropic_api_key"), images)
+        result = ai.parse_workouts(text, athlete_list, week_start, config.get("anthropic_api_key"), images, fixed)
     except ai.AIError as e:
         raise HTTPException(502, str(e))
+    if fixed:
+        for w in result["workouts"]:
+            w["athlete_id"] = fixed["id"]
     valid_ids = {a["id"] for a in athlete_list}
     for w in result["workouts"]:
         if w["athlete_id"] not in valid_ids:

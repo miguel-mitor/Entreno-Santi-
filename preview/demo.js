@@ -163,7 +163,15 @@
     if (path === "/api/settings/test") return {athletes: ATHLETES.length};
     if (path === "/api/parse") {
       await new Promise(r => setTimeout(r, 1500));
-      const ws = opts.body.get("week_start");
+      const ws = opts.body.get("week_start"), fixedId = opts.body.get("athlete_id");
+      if (fixedId) return {athletes: ATHLETES.map(({id, name}) => ({id, name})), general_warnings: ["Vista previa: estos entrenos son de ejemplo, no se han leído de tus archivos (Excel o fotos)."],
+        workouts: [
+          {athlete_id: fixedId, athlete_name_in_excel: "", date: add(ws, 0), sport: "Run", name: "Rodaje suave 50'", description: "- 50m Z2 Pace", warning: ""},
+          {athlete_id: fixedId, athlete_name_in_excel: "", date: add(ws, 1), sport: "Run", name: "Series 8x400", description: "Calentamiento\n- 15m Z2 Pace\n\nSeries 8x\n- 400mtr 3:30/km Pace\n- 90s Z1 Pace\n\n- 10m Z1 Pace", warning: ""},
+          {athlete_id: fixedId, athlete_name_in_excel: "", date: add(ws, 2), sport: "WeightTraining", name: "Fuerza 40'", description: "Circuito de fuerza\n- 40m", warning: ""},
+          {athlete_id: fixedId, athlete_name_in_excel: "", date: add(ws, 3), sport: "Ride", name: "Bici 1h30 Z2", description: "- 90m 65-75%", warning: "En la foto ponía «bici 1h30» sin intensidad; he supuesto Z2."},
+          {athlete_id: fixedId, athlete_name_in_excel: "", date: add(ws, 5), sport: "Run", name: "Tirada larga 1h40", description: "- 100m Z2 Pace", warning: ""},
+        ]};
       return {athletes: ATHLETES.map(({id, name}) => ({id, name})), general_warnings: ["Vista previa: estos entrenos son de ejemplo, no se han leído de tus archivos (Excel o fotos)."],
         workouts: [
           {athlete_id: "i101", athlete_name_in_excel: "Santi", date: add(ws, 1), sport: "Run", name: "Series 6x1000", description: "Calentamiento\n- 15m Z2 Pace\n\nSeries 6x\n- 1km 3:50/km Pace\n- 90s Z1 Pace\n\nVuelta a la calma\n- 10m Z1 Pace", warning: ""},
@@ -192,5 +200,4 @@
       return new Response(JSON.stringify({detail: msg}), {status: st, headers: {"Content-Type": "application/json"}});
     }
   };
-  window.confirm = () => true; // el visor no muestra diálogos; en la app real sí se pide confirmación
 })();

@@ -59,6 +59,8 @@ Te doy la lista de atletas de Intervals.icu (id y nombre). Asigna a cada sesión
 correspondiente, emparejando por nombre aunque esté escrito distinto (apodos, solo nombre, sin tildes...).
 Si no puedes emparejarlo con seguridad, deja `athlete_id` vacío y explícalo en `warning`.
 Rellena siempre `athlete_name_in_excel` con el nombre tal cual aparece en el Excel.
+Si llegan varios archivos o imágenes, cada uno puede ser el plan de un atleta distinto: el nombre del
+archivo (p. ej. «Laura semana 45.xlsx») o un título dentro de la hoja suelen indicar de quién es.
 
 ## Fechas
 `date` en formato YYYY-MM-DD. Si el Excel solo pone días de la semana (Lunes, Martes, L, M, X...),
@@ -121,7 +123,8 @@ class AIError(Exception):
 
 
 def parse_workouts(excel_text: str, athletes: list[dict], week_start: str, api_key: str = "",
-                   images: list[tuple[str, list[dict]]] | None = None) -> dict:
+                   images: list[tuple[str, list[dict]]] | None = None,
+                   athlete: dict | None = None) -> dict:
     if not api_key:
         raise AIError("Falta la clave de Anthropic para interpretar el Excel. Añádela en Configuración.")
     client = anthropic.Anthropic(api_key=api_key)
@@ -131,10 +134,18 @@ def parse_workouts(excel_text: str, athletes: list[dict], week_start: str, api_k
         label = f"Imagen «{name}»" + (f" (troceada en {len(blocks)} partes, de arriba abajo)" if len(blocks) > 1 else "")
         content.append({"type": "text", "text": label + ":"})
         content.extend(blocks)
-    text = (
-        f"Lunes de la semana a programar: {week_start}\n\n"
-        f"Atletas en Intervals.icu:\n{athletes_txt}\n\n"
-    )
+    if athlete:
+        text = (
+            f"Lunes de la semana a programar: {week_start}\n\n"
+            f"Este archivo es el plan de UN ÚNICO atleta: id={athlete['id']} · nombre={athlete['name']}.\n"
+            "Asigna todas las sesiones a este atleta aunque su nombre no aparezca o esté escrito de otra forma. "
+            "Si el archivo parece contener entrenos de otras personas, avísalo en `general_warnings`.\n\n"
+        )
+    else:
+        text = (
+            f"Lunes de la semana a programar: {week_start}\n\n"
+            f"Atletas en Intervals.icu:\n{athletes_txt}\n\n"
+        )
     if excel_text:
         text += f"Contenido del Excel:\n<excel>\n{excel_text}\n</excel>\n\n"
     if images:

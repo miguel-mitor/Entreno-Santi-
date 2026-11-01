@@ -6,14 +6,16 @@ import os
 import re
 import unicodedata
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import ai
+from . import ai, tracking
 from .excel import workbook_to_text
 from .intervals import Intervals, IntervalsError
 
@@ -21,6 +23,7 @@ load_dotenv()
 
 app = FastAPI(title="Excel → Intervals.icu")
 STATIC = Path(__file__).parent / "static"
+app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 
 def intervals() -> Intervals:
@@ -124,3 +127,46 @@ def upload(req: UploadRequest):
         except IntervalsError as e:
             results.append({"athlete_id": athlete_id, "ok": False, "error": str(e), "count": 0})
     return {"results": results}
+
+
+# ---------- Seguimiento de atletas ----------
+
+def _week_param(start: str | None) -> str:
+    if not start:
+        return dt.date.today().isoformat()
+    try:
+        dt.date.fromisoformat(start)
+    except ValueError:
+        raise HTTPException(400, "Fecha no válida")
+    return start
+
+
+@app.get("/api/overview")
+def overview(start: str | None = None):
+    start = _week_param(start)
+    client = intervals()
+    try:
+        athlete_list = client.list_athletes()
+    except IntervalsError as e:
+        raise HTTPException(502, str(e))
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        rows = list(pool.map(lambda a: tracking.build_overview_row(client, a, start), athlete_list))
+    mon, sun = tracking.week_bounds(start)
+    return {"week_start": mon.isoformat(), "week_end": sun.isoformat(),
+            "today": dt.date.today().isoformat(), "athletes": rows}
+
+
+@app.get("/api/athletes/{athlete_id}/week")
+def athlete_week(athlete_id: str, start: str | None = None):
+    try:
+        return tracking.build_week(intervals(), athlete_id, _week_param(start))
+    except IntervalsError as e:
+        raise HTTPException(502, str(e))
+
+
+@app.get("/api/athletes/{athlete_id}/wellness")
+def athlete_wellness(athlete_id: str, days: int = 90):
+    try:
+        return tracking.build_wellness(intervals(), athlete_id, max(7, min(days, 365)))
+    except IntervalsError as e:
+        raise HTTPException(502, str(e))

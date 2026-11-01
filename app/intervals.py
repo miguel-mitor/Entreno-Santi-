@@ -47,3 +47,19 @@ class Intervals:
         )
         self._check(r)
         return r.json()
+
+    # ---------- Seguimiento ----------
+
+    def _get(self, path: str, **params):
+        r = self.client.get(path, params=params)
+        self._check(r)
+        return r.json()
+
+    def events(self, athlete_id: str, oldest: str, newest: str) -> list[dict]:
+        return self._get(f"/athlete/{athlete_id}/events", oldest=oldest, newest=newest)
+
+    def activities(self, athlete_id: str, oldest: str, newest: str) -> list[dict]:
+        return self._get(f"/athlete/{athlete_id}/activities", oldest=oldest, newest=newest)
+
+    def wellness(self, athlete_id: str, oldest: str, newest: str) -> list[dict]:
+        return self._get(f"/athlete/{athlete_id}/wellness", oldest=oldest, newest=newest)
